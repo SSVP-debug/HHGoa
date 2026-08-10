@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-surface-900 text-goa-off font-body antialiased overflow-x-hidden;
+  }
+  ::selection {
+    background: #FEE101;
+    color: #0B6839;
+  }
+  :focus-visible {
+    outline: 2px solid #FEE101;
+    outline-offset: 3px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Flat "sticker" panel — solid fill, hard offset shadow, thick edge.
+     Replaces the old backdrop-blur glass treatment: the source asset pack
+     is entirely flat illustration with no translucency anywhere. */
+  .panel {
+    background: #0F7A43;
+    border: 1.5px solid rgba(251, 246, 233, 0.18);
+    box-shadow: 0 6px 0 -2px rgba(3, 26, 14, 0.35);
+  }
+  .sticker {
+    box-shadow: 4px 5px 0 rgba(3, 26, 14, 0.9);
+  }
+  .sticker-sm {
+    box-shadow: 2px 3px 0 rgba(3, 26, 14, 0.9);
+  }
+  .noise {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+  }
+  .text-gradient {
+    background: linear-gradient(100deg, #FEE101 0%, #EDD723 45%, #FF0080 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .shine-sweep {
+    background: linear-gradient(
+      110deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.3) 45%,
+      rgba(255, 255, 255, 0.5) 50%,
+      rgba(255, 255, 255, 0.3) 55%,
+      transparent 70%
+    );
+    background-size: 250% 100%;
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}
