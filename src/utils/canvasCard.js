@@ -205,7 +205,7 @@ export async function renderBuilderCardToCanvas({
 
   ctx.fillStyle = "rgba(251,246,233,0.4)";
   ctx.font = "600 16px 'JetBrains Mono'";
-  ctx.fillText("BUILDER ID · 2026", leftTextX, by - 30);
+  ctx.fillText("BUILDER ID · 2026 · #FRAMEINGOA", leftTextX, by - 30);
   if (serial) {
     ctx.fillStyle = "rgba(251,246,233,0.3)";
     ctx.font = "400 15px 'JetBrains Mono'";

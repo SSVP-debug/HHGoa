@@ -135,7 +135,9 @@ export default function BuilderCard({ photo, name, title, mode, stack, team, bui
                 <img src={qrDataUrl} alt="QR code linking to hhgoa.com" className="h-full w-full" />
               </div>
               <div>
-                <p className="font-mono text-[9px] text-goa-off/40 uppercase tracking-widest">Builder ID · 2026</p>
+                <p className="font-mono text-[9px] text-goa-off/40 uppercase tracking-widest">
+                  Builder ID · 2026 · #FrameInGoa
+                </p>
                 {serial && <p className="font-mono text-[9px] text-goa-off/30 mt-0.5">{serial}</p>}
                 {dna && (
                   <p className="font-mono text-[9px] text-goa-off/40 mt-1">

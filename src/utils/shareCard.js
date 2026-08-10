@@ -1,9 +1,9 @@
 // Layered sharing strategy for the Builder ID card.
 //
-// X's web intent (twitter.com/intent/tweet) has no API for attaching an
-// image — that's a hard platform limitation, not something we can code
-// around. So we try progressively weaker fallbacks until one actually gets
-// the image in front of the person to post:
+// X's web intent (x.com/intent/tweet) has no API for attaching an image —
+// that's a hard platform limitation, not something we can code around. So
+// we try progressively weaker fallbacks until one actually gets the image
+// in front of the person to post:
 //
 //   1. navigator.share() with a File — the real native mobile share sheet,
 //      lets the person pick X/Instagram/Messages/etc directly with the
@@ -31,8 +31,12 @@ function triggerDownload(blob, filename) {
 }
 
 function openTweetComposer(text, popup) {
-  const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
+  const shareUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(text)}`;
   if (popup && !popup.closed) popup.location.href = shareUrl;
+  // If the pre-opened tab wasn't available (blocked, or already closed by
+  // the native-share branch), this direct window.open call is only reached
+  // synchronously from the click handler's own attempt — see the retry note
+  // in shareBuilderCard for why that's no longer the common path.
   else window.open(shareUrl, "_blank", "noreferrer");
 }
 
@@ -50,6 +54,19 @@ export function buildCaption({ builderNumber, title, rarity }) {
 export async function shareBuilderCard({ blob, filename, caption }) {
   if (!blob) return "failed";
 
+  // Open the destination tab synchronously, as the very first thing this
+  // function does, while the click that triggered it still counts as "user
+  // activation". This used to happen only right before the X compose-intent
+  // fallback, i.e. after the navigator.share attempt had already run and
+  // awaited — but consuming an await first (even one that goes on to fail
+  // or get skipped) can cost the tab its activation, and browsers then
+  // silently block the window.open() call instead of redirecting to X. A
+  // blocked popup with no error is exactly what "share does nothing" looks
+  // like from the outside. Opening a blank tab first, before any await, and
+  // just redirecting *that* tab later removes the timing dependency —
+  // whichever fallback path runs, the redirect still goes through.
+  const popup = window.open("about:blank", "_blank");
+
   // 1. Native share sheet with the file attached — the strongest path,
   // mainly available on mobile browsers.
   if (navigator.share && navigator.canShare) {
@@ -57,19 +74,21 @@ export async function shareBuilderCard({ blob, filename, caption }) {
       const file = new File([blob], filename, { type: "image/png" });
       if (navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], text: caption });
+        // The native sheet already handled posting — the pre-opened blank
+        // tab was only a fallback and isn't needed now.
+        if (popup && !popup.closed) popup.close();
         return "shared";
       }
     } catch (err) {
       // AbortError means the person cancelled the share sheet themselves —
       // don't fall through to a download they didn't ask for.
-      if (err && err.name === "AbortError") return "failed";
+      if (err && err.name === "AbortError") {
+        if (popup && !popup.closed) popup.close();
+        return "failed";
+      }
       // otherwise fall through to the next strategy
     }
   }
-
-  // Open the tab synchronously so it isn't popup-blocked once we know we're
-  // headed for the web compose intent.
-  const popup = window.open("about:blank", "_blank");
 
   // 2. Clipboard image write — paste-ready in the X composer.
   try {
