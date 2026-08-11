@@ -6,7 +6,7 @@ import MagneticButton from "../shared/MagneticButton.jsx";
 import { exportCardAsPNG } from "../../utils/canvasCard.js";
 import { generateBuilderNumber, generateSerial, generateRarity, generateBuilderDNA } from "../../data/titles.js";
 import { saveBuilderRecord } from "../../utils/persistence.js";
-import { shareBuilderCard, buildCaption } from "../../utils/shareCard.js";
+import { shareBuilderCard, buildCaption, uploadCardForShare, EVENT_URL } from "../../utils/shareCard.js";
 
 // Tiny inline success states — no modal, matches the button's own copy so
 // the confirmation reads as one intentional action rather than a system
@@ -35,6 +35,11 @@ export default function Reveal({ builder, onRestart }) {
   const [shareHint, setShareHint] = useState(null); // 'shared' | 'copied' | 'downloaded' | null
   const [sharing, setSharing] = useState(false);
   const firedConfetti = useRef(false);
+  // Resolves to a /s/{id} link with a real per-card og:image, or null if the
+  // upload hasn't finished / isn't available (e.g. running off Vercel).
+  // Kicked off in the background the moment the card is ready so it's
+  // usually already resolved by the time someone taps Share.
+  const shareUrlPromiseRef = useRef(null);
 
   const builderNumber = generateBuilderNumber(builder.name.toLowerCase());
   const serial = generateSerial(builder.name.toLowerCase());
@@ -72,8 +77,20 @@ export default function Reveal({ builder, onRestart }) {
       setCardBlob(blob);
       setRendering(false);
 
+      // Fire the share-link upload in the background — never awaited here,
+      // so it can't add latency to Download/Share becoming available. The
+      // result is only consumed later, by handleShare.
+      shareUrlPromiseRef.current = uploadCardForShare({
+        blob,
+        meta: { name: builder.name, title: builder.title, rarity, builderNumber },
+      });
+
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
+        const imageDataUrl = reader.result;
+        // Persist immediately with whatever we have — if the upload is
+        // still in flight, patch the record in once it resolves so the
+        // "already claimed" screen can also share with the correct preview.
         saveBuilderRecord({
           name: builder.name,
           title: builder.title,
@@ -84,7 +101,24 @@ export default function Reveal({ builder, onRestart }) {
           serial,
           rarity,
           dna,
-          imageDataUrl: reader.result,
+          imageDataUrl,
+          claimedAt: Date.now(),
+        });
+
+        const shareUrl = await shareUrlPromiseRef.current;
+        if (cancelled || !shareUrl) return;
+        saveBuilderRecord({
+          name: builder.name,
+          title: builder.title,
+          mode: builder.mode,
+          stack: builder.stack,
+          team: builder.team,
+          builderNumber,
+          serial,
+          rarity,
+          dna,
+          imageDataUrl,
+          shareUrl,
           claimedAt: Date.now(),
         });
       };
@@ -135,7 +169,23 @@ export default function Reveal({ builder, onRestart }) {
   const handleShare = async () => {
     if (!cardBlob) return;
     setSharing(true);
-    const caption = buildCaption({ builderNumber, title: builder.title, rarity });
+
+    // Give the background upload a little extra time to land, but never
+    // block the share button waiting on the network — if it's not back in
+    // 3s (or fails, or isn't available on this host), fall back to the
+    // static event link rather than stalling "Share".
+    let link = EVENT_URL;
+    try {
+      const resolved = await Promise.race([
+        shareUrlPromiseRef.current,
+        new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+      ]);
+      if (resolved) link = resolved;
+    } catch {
+      // shareUrlPromiseRef stays EVENT_URL
+    }
+
+    const caption = buildCaption({ builderNumber, title: builder.title, rarity, link });
     const result = await shareBuilderCard({ blob: cardBlob, filename, caption });
     setSharing(false);
     if (result === "failed") return;

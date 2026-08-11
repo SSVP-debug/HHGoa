@@ -19,6 +19,52 @@
 
 export const EVENT_URL = "https://hhgoa.com";
 
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Uploads the rendered card to /api/upload (Vercel Blob under the hood) and
+// returns a /s/{id} link — a real URL, pointed at by /api/share/[id].js,
+// that carries an <meta og:image> for *this specific card*. That link (not
+// the static EVENT_URL) is what should go in the tweet text whenever the
+// image itself isn't directly attached, so the X link preview shows the
+// actual generated graphic instead of a generic/blank thumbnail.
+//
+// This only works when deployed on Vercel with a Blob store connected —
+// anywhere else (local `vite dev`, a different host, or if the request
+// simply fails) it resolves to null and callers fall back to EVENT_URL. The
+// share flow never blocks or errors because of this; it only loses the
+// per-card preview.
+export async function uploadCardForShare({ blob, meta = {} }) {
+  try {
+    const dataUrl = await blobToDataURL(blob);
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64: dataUrl }),
+    });
+    if (!res.ok) return null;
+    const { id } = await res.json();
+    if (!id) return null;
+
+    const params = new URLSearchParams();
+    if (meta.name) params.set("name", meta.name);
+    if (meta.title) params.set("title", meta.title);
+    if (meta.rarity) params.set("rarity", meta.rarity);
+    if (meta.builderNumber) params.set("builder", meta.builderNumber);
+    const qs = params.toString();
+
+    return `${EVENT_URL}/s/${id}${qs ? `?${qs}` : ""}`;
+  } catch {
+    return null;
+  }
+}
+
 function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -43,9 +89,9 @@ function openTweetComposer(text, popup) {
 // Conversation-oriented caption — asks a direct question so replies and
 // quote-tweets ("what did YOU get?") are the natural response, rather than
 // generic marketing copy.
-export function buildCaption({ builderNumber, title, rarity }) {
+export function buildCaption({ builderNumber, title, rarity, link = EVENT_URL }) {
   const rarityLine = rarity === "Legendary" || rarity === "Epic" ? `Pulled ${rarity} tier ✨\n\n` : "";
-  return `Just claimed my HH Goa Builder ID.\n\nBuilder ${builderNumber} · ${title}\n\n${rarityLine}What's your builder class?\n\n#FrameInGoa\n${EVENT_URL}`;
+  return `Just claimed my HH Goa Builder ID.\n\nBuilder ${builderNumber} · ${title}\n\n${rarityLine}What's your builder class?\n\n#FrameInGoa\n${link}`;
 }
 
 /**

@@ -62,7 +62,14 @@ export default function App() {
     if (!claimed) return;
     const blob = dataUrlToBlob(claimed.imageDataUrl);
     const filename = `hhgoa-2026-builder-id-${claimed.name.toLowerCase().replace(/\s+/g, "-")}.png`;
-    const caption = buildCaption({ builderNumber: claimed.builderNumber, title: claimed.title, rarity: claimed.rarity });
+    // Reuse the /s/{id} link saved at generation time, when it made it in —
+    // otherwise this falls back to buildCaption's default EVENT_URL.
+    const caption = buildCaption({
+      builderNumber: claimed.builderNumber,
+      title: claimed.title,
+      rarity: claimed.rarity,
+      ...(claimed.shareUrl ? { link: claimed.shareUrl } : {}),
+    });
     return shareBuilderCard({ blob, filename, caption });
   };
 

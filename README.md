@@ -144,6 +144,104 @@ submissions, no verification, weak branding). Fixes applied:
   into `tailwind.config.js` and `src/data/titles.js` before submitting;
   everything else is already wired to use them.
 
+## Share links now preview the actual generated card (OG image)
+
+Previously the only thing shared as a "link" was the static `hhgoa.com`
+homepage — so any X share that didn't go through the native file-attach path
+(desktop browsers, mainly) previewed a generic/blank card instead of the
+person's actual Builder ID. Fixed with two small Vercel serverless
+functions, no separate backend/database:
+
+- **`api/upload.js`** (`POST /api/upload`) — takes the rendered PNG (as a
+  base64 data URL) and stores it in **Vercel Blob** under `cards/{id}.png`,
+  returning that `id`.
+- **`api/share/[id].js`** (`GET /s/:id`, rewritten from the pretty URL in
+  `vercel.json`) — looks the blob back up by `id` and returns a real HTML
+  page with `og:image` / `twitter:image` pointed at that specific card, plus
+  a JS redirect (skipped by crawlers, since they don't run JS) into the app
+  for actual human visitors.
+
+Client side: right after the canvas export finishes, `Reveal.jsx` fires
+`uploadCardForShare()` (`utils/shareCard.js`) in the background — not
+awaited, so it never delays Download/Share becoming clickable. When Share is
+tapped, it waits up to 3s for that upload to resolve into a `/s/{id}` link
+and uses it as the link in the tweet caption; if it's not back in time, or
+the upload failed, or this isn't running on Vercel at all (e.g. local `vite
+dev`, or a plain static host), it silently falls back to the static
+`EVENT_URL` exactly as before — the share flow itself never blocks or
+errors because of this. The resolved link is also persisted into the
+`localStorage` builder record, so re-sharing from the "already claimed"
+screen (`AlreadyClaimed.jsx`) reuses the same working preview link instead
+of losing it on refresh.
+
+**Setup required post-deploy (Vercel only):**
+1. Project → Storage → Connect a **Blob** store. Vercel then injects
+   `BLOB_READ_WRITE_TOKEN` automatically — nothing to copy manually.
+2. Set a `SITE_URL` env var to the real deployed domain (falls back to
+   `https://hhgoa.com` if unset) so `/api/share/[id].js` builds correct
+   absolute URLs.
+3. Update the hardcoded `https://hhgoa.com/...` OG values in `index.html`
+   (the generic, non-per-card fallback tags) to match the real domain too.
+
+**Netlify:** `netlify.toml` still deploys the static app fine, but these two
+functions are written for Vercel's Node runtime and Vercel Blob. Sharing
+still works on Netlify — it just falls back to the static link/image instead
+of a per-card preview, same as any other non-Vercel host. Porting to
+Netlify Functions + Netlify Blobs would be a small, mechanical follow-up if
+Netlify is the target instead.
+
+## Card redesign — shorter, and more Goa energy
+
+The card was a 9:16 (1080×1920) "story" format. Feedback was that it read as
+too long, and too flat/corporate for a beach hackathon. Both come from the
+same root cause: the old layout top-anchored the identity block (name/
+title/tags) and bottom-anchored the stats block (QR/builder number)
+independently, leaving roughly 600px of empty green in between on a card
+that tall. Fix wasn't just shrinking the canvas — it was closing that gap
+with real content, updated in `BuilderCard.jsx` (DOM) and `canvasCard.js`
+(the actual downloadable PNG) together, as always:
+
+- **Shorter: 4:5 (1080×1350) instead of 9:16 (1080×1920)** — about a 30%
+  reduction, still a portrait badge, no longer a full "story" slab. Also
+  bumped up as a more natural fit for a normal X timeline post vs. a
+  full-height story crop.
+- **Photo block tightened to 48%** of the new, shorter height (was 56% of
+  a much taller one) — smaller in absolute pixels, but nothing under it is
+  dead space anymore.
+- **Builder DNA promoted to real stat bars.** Focus/Ship used to be one
+  small text line buried in the footer. Now they're RPG-style progress
+  bars (sage green / yellow) sitting right in the gap that used to be
+  empty — real content people will actually screenshot or compare, not
+  filler.
+- **Tide-line divider** — a small hand-drawn wave (sage green) between the
+  identity block and the stat bars. Cheap, code-drawn, no new asset needed,
+  and it's a genuine beach/tide nod rather than a blank rule.
+- **Sunset glow** — a warm yellow-to-pink radial bloom low behind the goवा
+  seal corner. The one atmospheric touch on an otherwise flat-illustration
+  card, evoking a Goa sunset without breaking the brand's flat-color rule
+  everywhere else.
+- **Palm + bougainvillea footer band** — a real cropped slice of the
+  official `palm-frame.webp` asset (monstera leaves, bougainvillea,
+  marigold), not an invented tropical cliché, running the full width of
+  the card's bottom edge. This is the single biggest "Goa energy" addition
+  and, not coincidentally, also fills what used to be the emptiest part of
+  the old card.
+- **Punchier tag chips** — Team and Rarity are now filled color chips
+  (Epic = pink fill, Rare = yellow fill) instead of thin outlines, so the
+  "pull" people would want to quote-tweet actually reads as a highlight
+  rather than blending into Stack/Mode's neutral outline pills.
+
+`AlreadyClaimed.jsx`'s persisted-card preview box was updated to match
+(`aspect-[4/5]`, was still `aspect-[9/16]`) so a previously-generated image
+isn't cropped by a mismatched container on refresh. `og:image:height` in
+`api/share/[id].js` and the `MAX_BYTES` comment in `api/upload.js` were also
+corrected from 1920 to 1350 to match.
+
+Sanity-checked the new layout's geometry (spacing, no overlaps) with a
+standalone Python/PIL mockup outside the actual React/canvas code, since
+this sandbox has no browser to screenshot the real components — worth a
+quick visual pass once deployed, same caveat as the font note below.
+
 ## Notes on the harder parts
 
 - **Export quality**: the on-screen card uses CSS glass/blur/sheen for feel, but the PNG you
@@ -160,4 +258,5 @@ submissions, no verification, weak branding). Fixes applied:
 - Swap placeholder color tokens / titles for verified HH Goa brand assets.
 - Add a scroll-triggered parallax on the landing hero if you want more motion above the fold.
 - Wire real device-tilt (`deviceorientation`) for the card sheen on mobile, currently pointer-only.
-- Consider an OG-image endpoint if this needs to render server-side for link previews.
+- Port the OG-image share endpoint (see above) to Netlify Functions + Netlify Blobs if Netlify ends up being the actual deploy target instead of Vercel.
+- Visually verify Rozha One/Baloo 2 render correctly once deployed (see font note above — untested in this sandbox due to blocked font CDN access).

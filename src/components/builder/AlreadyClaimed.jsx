@@ -43,7 +43,7 @@ export default function AlreadyClaimed({ record, onDownload, onShare, onRegenera
         initial={{ opacity: 0, scale: 0.86, rotate: -3 }}
         animate={{ opacity: 1, scale: 1, rotate: 0 }}
         transition={{ type: "spring", stiffness: 200, damping: 16, delay: 0.15 }}
-        className="w-[300px] sm:w-[340px] aspect-[9/16] rounded-[1.5rem] overflow-hidden border-[3px] border-surface-950/40 sticker"
+        className="w-[300px] sm:w-[340px] aspect-[4/5] rounded-[1.5rem] overflow-hidden border-[3px] border-surface-950/40 sticker"
       >
         <img src={record.imageDataUrl} alt={`${record.name}'s Builder ID`} className="h-full w-full object-cover" />
       </motion.div>

@@ -15,6 +15,13 @@ const RARITY_STYLES = {
   Legendary: "text-gradient border-goa-yellow",
 };
 
+const RARITY_CHIP = {
+  Common: "bg-surface-950/30 text-goa-off/70 border-goa-off/25",
+  Rare: "bg-goa-yellow text-surface-950 border-goa-yellow",
+  Epic: "bg-goa-pink text-goa-off border-goa-pink",
+  Legendary: "text-gradient border-goa-yellow bg-surface-950/40",
+};
+
 export default function BuilderCard({ photo, name, title, mode, stack, team, builderNumber, serial, rarity, dna }) {
   const ref = useRef(null);
   const [tilt, setTilt] = useState({ rx: 0, ry: 0 });
@@ -48,13 +55,15 @@ export default function BuilderCard({ photo, name, title, mode, stack, team, bui
         animate={{ rotateX: tilt.rx, rotateY: tilt.ry }}
         transition={{ type: "spring", stiffness: 120, damping: 14 }}
         style={{ transformStyle: "preserve-3d" }}
-        className="relative w-[300px] sm:w-[340px] aspect-[9/16] rounded-[1.5rem] overflow-hidden select-none border-[3px] border-surface-950/40 sticker"
+        className="relative w-[300px] sm:w-[340px] aspect-[4/5] rounded-[1.5rem] overflow-hidden select-none border-[3px] border-surface-950/40 sticker"
       >
         {/* base surface — official HH Goa green */}
         <div className="absolute inset-0 bg-goa-green" />
 
-        {/* photo */}
-        <div className="absolute inset-x-0 top-0 h-[56%] overflow-hidden">
+        {/* photo — shorter hero block now that the card itself is shorter;
+            still the dominant element, just without the huge dead-green
+            gap that a 9:16 card left underneath it */}
+        <div className="absolute inset-x-0 top-0 h-[48%] overflow-hidden">
           {hasPhoto ? (
             <img src={photo.url} alt={displayName} className="h-full w-full object-cover" />
           ) : (
@@ -70,12 +79,20 @@ export default function BuilderCard({ photo, name, title, mode, stack, team, bui
           <div className="absolute inset-0 bg-gradient-to-t from-goa-green via-transparent to-transparent" />
         </div>
 
+        {/* sunset glow — a warm bloom low behind the badge corner, the one
+            purely atmospheric touch on an otherwise flat-illustration card */}
+        <div
+          className="pointer-events-none absolute -bottom-6 -right-6 h-40 w-40 rounded-full opacity-70"
+          style={{ background: "radial-gradient(circle, rgba(254,225,1,0.35), rgba(255,0,128,0.18) 55%, transparent 75%)" }}
+          aria-hidden="true"
+        />
+
         {/* the official HH Goa diamond trim as the seam — not an invented
             wave shape, the actual repeating brand pattern from the site */}
         <div
           className="absolute inset-x-0 h-3"
           style={{
-            top: "calc(56% - 6px)",
+            top: "calc(48% - 6px)",
             backgroundImage: "url('/brand/border-strip.svg')",
             backgroundSize: "auto 100%",
             backgroundRepeat: "repeat-x",
@@ -89,20 +106,20 @@ export default function BuilderCard({ photo, name, title, mode, stack, team, bui
           ))}
         </div>
 
-        {/* content — simplified hierarchy: name, title, compact identity
-            metadata, builder number/rarity. No verification claim: there is
-            no attendee-auth system behind this, so the card only ever says
-            what's true. */}
-        <div className="absolute inset-x-0 bottom-0 top-[57%] px-6 pb-5 pt-4 flex flex-col justify-between">
+        {/* content — name, title, compact identity metadata, a tide-line
+            divider, then builder number/rarity. No verification claim:
+            there is no attendee-auth system behind this, so the card only
+            ever says what's true. */}
+        <div className="absolute inset-x-0 bottom-[15%] top-[49%] px-6 py-3 flex flex-col justify-between">
           <div>
-            <h3 className="font-display text-[1.75rem] leading-[1.05] text-goa-off">{displayName}</h3>
+            <h3 className="font-display text-[1.55rem] leading-[1.05] text-goa-off">{displayName}</h3>
             <p className={`font-accent text-sm font-bold mt-0.5 ${title ? "text-gradient" : "text-goa-off/30"}`}>
               {displayTitle}
             </p>
 
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 pr-16">
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 pr-16">
               {team && (
-                <span className="rounded-full border border-goa-yellow/60 bg-goa-yellow/10 px-2 py-0.5 font-mono text-[9px] font-bold tracking-widest text-goa-yellow uppercase">
+                <span className="rounded-full border border-goa-yellow bg-goa-yellow/15 px-2 py-0.5 font-mono text-[9px] font-bold tracking-widest text-goa-yellow uppercase">
                   Team {team}
                 </span>
               )}
@@ -117,12 +134,45 @@ export default function BuilderCard({ photo, name, title, mode, stack, team, bui
                 </span>
               )}
               {rarity && (
-                <span className={`rounded-full border px-2 py-0.5 font-accent text-[8px] font-bold uppercase tracking-widest ${RARITY_STYLES[rarity]}`}>
+                <span className={`rounded-full border px-2 py-0.5 font-accent text-[8px] font-bold uppercase tracking-widest ${RARITY_CHIP[rarity] || RARITY_STYLES[rarity]}`}>
                   {rarity}
                 </span>
               )}
             </div>
           </div>
+
+          {/* tide-line divider — a hand-drawn wave standing in for the
+              usual empty gap on a badge this shape, doubles as a beach/tide
+              nod rather than a blank rule */}
+          <svg viewBox="0 0 300 10" className="w-full h-2 my-1" preserveAspectRatio="none" aria-hidden="true">
+            <path
+              d="M0 5 Q 12.5 0 25 5 T 50 5 T 75 5 T 100 5 T 125 5 T 150 5 T 175 5 T 200 5 T 225 5 T 250 5 T 275 5 T 300 5"
+              fill="none"
+              stroke="#9AC95F"
+              strokeOpacity="0.45"
+              strokeWidth="1.5"
+            />
+          </svg>
+
+          {/* Builder DNA stat bars — same promotion as the canvas export:
+              a real readout instead of a single small text line, filling
+              what used to be dead space with something worth screenshotting */}
+          {dna && (
+            <div className="flex flex-col gap-1.5 my-1">
+              {[
+                ["FOCUS", dna.focus, "bg-goa-greenLight"],
+                ["SHIP", dna.ship, "bg-goa-yellow"],
+              ].map(([label, value, barColor]) => (
+                <div key={label} className="flex items-center gap-2">
+                  <span className="w-10 shrink-0 font-mono text-[9px] font-bold text-goa-off/55">{label}</span>
+                  <div className="h-[7px] flex-1 rounded-full bg-goa-off/15 overflow-hidden">
+                    <div className={`h-full rounded-full ${barColor}`} style={{ width: `${value}%` }} />
+                  </div>
+                  <span className="w-6 shrink-0 text-right font-mono text-[9px] font-bold text-goa-off/70">{value}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-end justify-between">
             {/* QR docked directly beside its text block, not floating in
@@ -139,11 +189,6 @@ export default function BuilderCard({ photo, name, title, mode, stack, team, bui
                   Builder ID · 2026 · #FrameInGoa
                 </p>
                 {serial && <p className="font-mono text-[9px] text-goa-off/30 mt-0.5">{serial}</p>}
-                {dna && (
-                  <p className="font-mono text-[9px] text-goa-off/40 mt-1">
-                    FOCUS {dna.focus} · SHIP {dna.ship}
-                  </p>
-                )}
               </div>
             </div>
             <div className="flex items-end gap-2">
@@ -157,6 +202,23 @@ export default function BuilderCard({ photo, name, title, mode, stack, team, bui
             </div>
           </div>
         </div>
+
+        {/* footer band — a real slice of the official palm-frame asset
+            (bougainvillea, marigold, monstera leaves), not an invented
+            tropical cliché. This is the card's biggest "Goa energy" beat:
+            it replaces what used to be dead green space at the very bottom
+            edge with the one part of the brand pack that's explicitly
+            botanical/festive rather than corporate-flat. */}
+        <div
+          className="absolute inset-x-0 bottom-0 h-[15%]"
+          style={{
+            backgroundImage: "url('/brand/palm-frame.webp')",
+            backgroundSize: "260% auto",
+            backgroundPosition: "50% 100%",
+            backgroundRepeat: "no-repeat",
+          }}
+          aria-hidden="true"
+        />
 
         {/* holographic sheen following pointer — restrained, brand isn't glassy */}
         <div
