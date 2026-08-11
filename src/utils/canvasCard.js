@@ -1,11 +1,14 @@
-// Draws the Builder ID card to an offscreen canvas at 3x resolution for a
-// crisp, social-ready PNG export. Kept in lockstep with BuilderCard.jsx —
-// whatever the DOM card shows, this should reproduce.
+// Draws the Builder ID card to an offscreen canvas at social-export
+// resolution for a crisp, downloadable PNG. Kept in lockstep with
+// BuilderCard.jsx — whatever the DOM card shows, this reproduces, down to
+// the same focal-point photo crop, the same gradient stops, and the same
+// stamp. If you change one, change the other.
 
 import { getEventQrDataUrl } from "./qr.js";
+import { computeFocalPosition, coverSourceRect } from "./smartCrop.js";
 
-const W = 1080; // export width (3x of a 360 card)
-const H = Math.round((1080 * 5) / 4); // 4:5 — shorter than the old 9:16 story ratio, still a portrait badge
+const W = 1080; // export width — social-first portrait canvas
+const H = 1350; // 4:5, per spec (1080x1350)
 
 function roundedRectPath(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -27,22 +30,92 @@ function loadImage(src) {
   });
 }
 
-function drawCoverImage(ctx, img, x, y, w, h) {
-  const imgRatio = img.width / img.height;
-  const boxRatio = w / h;
-  let sx, sy, sw, sh;
-  if (imgRatio > boxRatio) {
-    sh = img.height;
-    sw = sh * boxRatio;
-    sx = (img.width - sw) / 2;
-    sy = 0;
-  } else {
-    sw = img.width;
-    sh = sw / boxRatio;
-    sx = 0;
-    sy = (img.height - sh) / 2;
-  }
+// Draws `img` covering the x/y/w/h box, cropped around the same focal
+// point BuilderCard.jsx uses for its CSS object-position — so the export
+// never shows a different slice of the photo than the live preview did.
+function drawCoverImage(ctx, img, x, y, w, h, focal) {
+  const { sx, sy, sw, sh } = coverSourceRect(img.width, img.height, w, h, focal);
   ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+}
+
+// Places each character of `text` along a circular arc, centered on
+// `centerAngle`. Mirrors what the DOM stamp gets for free from SVG
+// <textPath> — canvas has no equivalent, so this reimplements it by hand.
+// `inward` flips the baseline for text curving along the *bottom* of the
+// circle so it reads upright rather than upside down.
+function drawArcText(ctx, text, cx, cy, radius, { font, color, centerAngle, inward = false }) {
+  ctx.save();
+  ctx.font = font;
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = inward ? "top" : "bottom";
+  const chars = [...text];
+  const angularWidths = chars.map((ch) => ctx.measureText(ch).width / radius);
+  const totalAngle = angularWidths.reduce((a, b) => a + b, 0);
+  let angle = centerAngle - totalAngle / 2;
+  ctx.translate(cx, cy);
+  for (let i = 0; i < chars.length; i++) {
+    angle += angularWidths[i] / 2;
+    ctx.save();
+    ctx.rotate(angle);
+    if (inward) {
+      ctx.translate(0, radius);
+      ctx.rotate(Math.PI);
+    } else {
+      ctx.translate(0, -radius);
+    }
+    ctx.fillText(chars[i], 0, 0);
+    ctx.restore();
+    angle += angularWidths[i] / 2;
+  }
+  ctx.restore();
+}
+
+// The passport/event-stamp badge — dashed ring, curved HH Goa copy top and
+// bottom, the real Devanagari seal mark centered. Matches <Stamp/> in
+// BuilderCard.jsx.
+async function drawStamp(ctx, cx, cy, size) {
+  const r = size / 2;
+  const ringR = r - 6;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(3,26,14,0.55)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(251,246,233,0.7)";
+  ctx.lineWidth = size * 0.013;
+  ctx.setLineDash([size * 0.028, size * 0.038]);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR - size * 0.075, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(254,225,1,0.55)";
+  ctx.lineWidth = size * 0.009;
+  ctx.stroke();
+  ctx.restore();
+
+  drawArcText(ctx, "HACKER HOUSE GOA", cx, cy, ringR - size * 0.16, {
+    font: `700 ${Math.round(size * 0.082)}px 'Baloo 2'`,
+    color: "#FBF6E9",
+    centerAngle: -Math.PI / 2,
+  });
+  drawArcText(ctx, "GOA BUILDER · 2026", cx, cy, ringR - size * 0.12, {
+    font: `700 ${Math.round(size * 0.073)}px 'Baloo 2'`,
+    color: "#FEE101",
+    centerAngle: Math.PI / 2,
+    inward: true,
+  });
+
+  try {
+    const seal = await loadImage("/brand/goa-seal.svg");
+    const sealSize = size * 0.38;
+    ctx.drawImage(seal, cx - sealSize / 2, cy - sealSize / 2, sealSize, sealSize);
+  } catch {
+    // seal is decorative — export still succeeds without it
+  }
 }
 
 const RARITY_COLOR = {
@@ -57,10 +130,13 @@ const RARITY_COLOR = {
 // the on-screen card.
 async function ensureFontsReady() {
   const specs = [
-    "400 56px 'Rozha One'",
+    "400 64px 'Rozha One'",
+    "400 34px 'Rozha One'",
     "700 30px 'Baloo 2'",
+    "700 15px 'Baloo 2'",
     "800 15px 'Baloo 2'",
     "600 22px 'JetBrains Mono'",
+    "700 14px 'JetBrains Mono'",
   ];
   try {
     await Promise.all(specs.map((s) => document.fonts.load(s)));
@@ -93,156 +169,167 @@ export async function renderBuilderCardToCanvas({
   roundedRectPath(ctx, 0, 0, W, H, r);
   ctx.clip();
 
-  // base — official HH Goa green, flat (the brand has no gradients)
+  // base — official HH Goa green, flat (the brand has no gradients), shows
+  // only if there's no photo yet
   ctx.fillStyle = "#0B6839";
   ctx.fillRect(0, 0, W, H);
 
-  // photo block — 48% of the shorter card (was 56% of a much taller one).
-  // In absolute pixels this hero shot is smaller than before, but nothing
-  // underneath it is empty anymore, which is what actually read as "too
-  // long" — the old card had ~600px of dead green between the tag row and
-  // the bottom stats row.
-  const photoH = H * 0.48;
+  // photo — full-bleed hero, the entire card, cropped around the same
+  // focal point the live preview uses so export never shows a different
+  // slice of the image
   const img = await loadImage(photoUrl);
-  drawCoverImage(ctx, img, 0, 0, W, photoH);
+  const focal = computeFocalPosition(img.width, img.height);
+  drawCoverImage(ctx, img, 0, 0, W, H, focal);
 
-  // fade to the card green at the bottom of the photo
-  const fade = ctx.createLinearGradient(0, photoH * 0.55, 0, photoH);
-  fade.addColorStop(0, "rgba(11,104,57,0)");
-  fade.addColorStop(1, "rgba(11,104,57,1)");
-  ctx.fillStyle = fade;
-  ctx.fillRect(0, 0, W, photoH);
+  // top scrim — keeps the header legible over any photo
+  const topScrim = ctx.createLinearGradient(0, 0, 0, H * 0.18);
+  topScrim.addColorStop(0, "rgba(3,26,14,0.55)");
+  topScrim.addColorStop(1, "rgba(3,26,14,0)");
+  ctx.fillStyle = topScrim;
+  ctx.fillRect(0, 0, W, H * 0.18);
 
-  // sunset glow — one atmospheric touch low behind the seal corner, the
-  // only non-flat element on an otherwise flat-illustration card
-  const glow = ctx.createRadialGradient(W - 40, H - 190, 10, W - 40, H - 190, 220);
-  glow.addColorStop(0, "rgba(254,225,1,0.32)");
-  glow.addColorStop(0.55, "rgba(255,0,128,0.16)");
+  // identity gradient — the photo dissolves into card-dark toward the
+  // bottom rather than hitting a hard panel edge, with a faint brand-green
+  // wash so the transition still reads as HH Goa
+  const gradTop = H * 0.46;
+  const idGrad = ctx.createLinearGradient(0, gradTop, 0, H);
+  idGrad.addColorStop(0, "rgba(11,104,57,0)");
+  idGrad.addColorStop(0.3, "rgba(11,104,57,0.28)");
+  idGrad.addColorStop(0.58, "rgba(3,26,14,0.55)");
+  idGrad.addColorStop(0.88, "rgba(3,26,14,0.93)");
+  idGrad.addColorStop(1, "rgba(3,26,14,0.97)");
+  ctx.fillStyle = idGrad;
+  ctx.fillRect(0, gradTop, W, H - gradTop);
+
+  // sunset glow — one atmospheric bloom, the single non-flat touch
+  const glow = ctx.createRadialGradient(W - 60, H - 240, 10, W - 60, H - 240, 280);
+  glow.addColorStop(0, "rgba(254,225,1,0.3)");
+  glow.addColorStop(0.55, "rgba(255,0,128,0.15)");
   glow.addColorStop(1, "rgba(255,0,128,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
 
-  // official diamond border-strip pattern as the seam, tiled across
-  let borderImg = null;
+  // diamond trim — the official repeating brand pattern as a graphic top
+  // edge/frame, not a seam splitting the card
   try {
-    borderImg = await loadImage("/brand/border-strip.svg");
-  } catch {
-    borderImg = null;
-  }
-  const seamY = photoH;
-  const stripH = 18;
-  if (borderImg) {
+    const borderImg = await loadImage("/brand/border-strip.svg");
+    const stripH = 22;
     const tileW = stripH * (borderImg.width / borderImg.height);
     let x = 0;
     while (x < W) {
-      ctx.drawImage(borderImg, x, seamY - stripH / 2, tileW, stripH);
+      ctx.drawImage(borderImg, x, 0, tileW, stripH);
       x += tileW;
     }
+  } catch {
+    // decorative — export still succeeds without it
   }
 
-  // perforation dots along top edge
-  ctx.fillStyle = "rgba(3,26,14,0.45)";
-  const dots = 14;
-  for (let i = 0; i < dots; i++) {
-    const dx = 40 + i * ((W - 80) / (dots - 1));
-    ctx.beginPath();
-    ctx.arc(dx, 24, 5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // text content — simplified hierarchy mirrored from BuilderCard.jsx:
-  // name -> title -> compact identity tags -> tide divider -> builder id /
-  // number. No "VERIFIED" claim anywhere — there is no attendee-auth
-  // system behind this, so the card only ever states what's actually true.
   const padX = 56;
-  let ty = seamY + 68;
 
-  ctx.fillStyle = "#FBF6E9";
-  ctx.font = "400 54px 'Rozha One'";
+  // header — HH Goa identity + a truthful "Builder ID" indicator (never
+  // "VERIFIED": there's no attendee-auth system behind this card)
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(truncate(ctx, name, W - padX * 2), padX, ty);
+  ctx.fillStyle = "#FBF6E9";
+  ctx.font = "400 34px 'Rozha One'";
+  ctx.fillText("HACKER HOUSE GOA", padX, 60);
+  ctx.font = "600 19px 'JetBrains Mono'";
+  ctx.fillStyle = "rgba(251,246,233,0.7)";
+  ctx.fillText("GOA, INDIA · 2026", padX, 86);
 
-  ty += 38;
-  const titleGrad = ctx.createLinearGradient(padX, 0, padX + 480, 0);
-  titleGrad.addColorStop(0, "#FEE101");
-  titleGrad.addColorStop(0.5, "#EDD723");
-  titleGrad.addColorStop(1, "#FF0080");
-  ctx.fillStyle = titleGrad;
-  ctx.font = "700 27px 'Baloo 2'";
-  ctx.fillText(title, padX, ty);
-
-  // compact tag row: team, stack, build mode, rarity — filled color chips
-  // for team/rarity (the "pull" you'd want to quote-tweet about), thin
-  // outline pills for stack/mode, wrapping to a second line if there isn't
-  // room, mirroring the DOM card's flex-wrap so up to four tags never run
-  // off the canvas edge.
-  ty += 38;
-  let tagX = padX;
-  let tagRowY = ty;
-  const tagH = 30;
-  const tagGapY = 10;
-  const maxRight = W - padX;
-  ctx.font = "700 14px 'Baloo 2'";
-  const drawTag = (label, { stroke, fill, text }) => {
-    if (!label) return;
-    const t = label.toUpperCase();
-    const w = ctx.measureText(t).width + 22;
-    if (tagX + w > maxRight && tagX > padX) {
-      tagX = padX;
-      tagRowY += tagH + tagGapY;
-    }
-    roundedRectPath(ctx, tagX, tagRowY - tagH + 6, w, tagH, tagH / 2);
-    if (fill) {
-      ctx.fillStyle = fill;
-      ctx.fill();
-    }
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.fillStyle = text;
-    ctx.fillText(t, tagX + 11, tagRowY - 4);
-    tagX += w + 10;
-  };
-  drawTag(team ? `Team ${team}` : null, { stroke: "#FEE101", fill: "rgba(254,225,1,0.18)", text: "#FEE101" });
-  drawTag(stack, { stroke: "rgba(251,246,233,0.3)", fill: null, text: "rgba(251,246,233,0.75)" });
-  drawTag(mode, { stroke: "rgba(251,246,233,0.3)", fill: null, text: "rgba(251,246,233,0.75)" });
-  drawTag(
-    rarity,
-    rarity === "Epic"
-      ? { stroke: "#FF0080", fill: "#FF0080", text: "#FBF6E9" }
-      : rarity === "Rare"
-        ? { stroke: "#FEE101", fill: "#FEE101", text: "#031A0E" }
-        : { stroke: "rgba(251,246,233,0.3)", fill: "rgba(3,26,14,0.3)", text: RARITY_COLOR[rarity] || RARITY_COLOR.Common }
-  );
-
-  // tide-line divider — a hand-drawn wave standing in for what used to be
-  // an empty gap on the old, taller card. Small beach/tide nod rather than
-  // a blank rule.
-  const waveY = tagRowY + 34;
-  ctx.strokeStyle = "rgba(154,201,95,0.45)";
-  ctx.lineWidth = 2.4;
-  ctx.beginPath();
-  const waveSpan = W - padX * 2;
-  const waveStep = 45;
-  ctx.moveTo(padX, waveY);
-  for (let x = 0; x <= waveSpan; x += waveStep * 2) {
-    ctx.quadraticCurveTo(padX + x + waveStep / 2, waveY - 6, padX + x + waveStep, waveY);
-    ctx.quadraticCurveTo(padX + x + waveStep * 1.5, waveY + 6, padX + x + waveStep * 2, waveY);
-  }
+  const pillLabel = "BUILDER ID";
+  ctx.font = "700 17px 'JetBrains Mono'";
+  const pillTextW = ctx.measureText(pillLabel).width;
+  const pillPad = 16;
+  const pillH = 38;
+  const pillW = pillTextW + pillPad * 2;
+  const pillX = W - padX - pillW;
+  const pillY = 34;
+  ctx.save();
+  ctx.fillStyle = "rgba(3,26,14,0.4)";
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(254,225,1,0.7)";
+  ctx.lineWidth = 1.6;
+  roundedRectPath(ctx, pillX, pillY, pillW, pillH, pillH / 2);
   ctx.stroke();
+  ctx.fillStyle = "#FEE101";
+  ctx.fillText(pillLabel, pillX + pillPad, pillY + pillH / 2 + 6);
+  ctx.restore();
 
-  // Builder DNA stat bars — promoted from a single small text line into an
-  // actual RPG-style stat readout. This fills what used to be dead green
-  // space between the tag row and the bottom block with something people
-  // will actually screenshot/compare, not just decoration for its own sake.
+  // passport stamp — crosses the photo/gradient seam on purpose, anchored
+  // to the right edge just above the identity copy
+  await (async () => {
+    ctx.save();
+    const stampCx = W - padX - 6;
+    const stampCy = H * 0.4;
+    ctx.translate(stampCx, stampCy);
+    ctx.rotate((-6 * Math.PI) / 180);
+    ctx.shadowColor = "rgba(3,26,14,0.55)";
+    ctx.shadowOffsetX = 3;
+    ctx.shadowOffsetY = 5;
+    await drawStamp(ctx, 0, 0, 330);
+    ctx.restore();
+  })();
+
+  // identity content — flows bottom-up from the footer row so it always
+  // ends flush with the palm band, the same way the DOM card's
+  // `justify-end` flex column packs it
+  const footerH = H * 0.09;
+  const zoneBottom = H - footerH - 24;
+
+  // -- bottom row: QR + Builder ID/serial (left), Builder number (right) --
+  const qrSize = 84;
+  const by = zoneBottom;
+  const leftTextX = padX + qrSize + 18;
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "rgba(251,246,233,0.45)";
+  ctx.font = "600 15px 'JetBrains Mono'";
+  ctx.fillText("GOA BUILDER · 2026 · #FRAMEINGOA", leftTextX, by - 20);
+  if (serial) {
+    ctx.fillStyle = "rgba(251,246,233,0.3)";
+    ctx.font = "400 14px 'JetBrains Mono'";
+    ctx.fillText(serial, leftTextX, by + 2);
+  }
+
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(251,246,233,0.45)";
+  ctx.font = "600 16px 'JetBrains Mono'";
+  ctx.fillText("BUILDER", W - padX, by - 40);
+  ctx.fillStyle = "#FEE101";
+  ctx.font = "400 46px 'Rozha One'";
+  ctx.fillText(builderNumber || "—", W - padX, by);
+  ctx.textAlign = "left";
+
+  try {
+    const qr = await loadImage(getEventQrDataUrl());
+    const qrX = padX;
+    const qrY = by - qrSize + 8;
+    ctx.save();
+    ctx.shadowColor = "rgba(3,26,14,0.5)";
+    ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = "#FBF6E9";
+    roundedRectPath(ctx, qrX, qrY, qrSize, qrSize, 8);
+    ctx.fill();
+    ctx.restore();
+    const pad = 7;
+    ctx.drawImage(qr, qrX + pad, qrY + pad, qrSize - pad * 2, qrSize - pad * 2);
+  } catch {
+    // QR is decorative — export still succeeds without it
+  }
+
+  // -- Builder DNA stat bars, directly above the bottom row --
+  let dnaTop = by - qrSize - 34;
   if (dna) {
-    const barLabelW = 74;
-    const barPctW = 54;
+    const barLabelW = 68;
+    const barPctW = 48;
     const barX = padX + barLabelW;
     const barW = W - padX * 2 - barLabelW - barPctW;
-    const barH = 9;
+    const barH = 8;
+    const rowGap = 26;
     const drawBar = (label, value, y, color) => {
-      ctx.font = "700 13px 'JetBrains Mono'";
+      ctx.font = "700 12px 'JetBrains Mono'";
       ctx.fillStyle = "rgba(251,246,233,0.55)";
       ctx.fillText(label, padX, y + barH - 1);
 
@@ -255,89 +342,82 @@ export async function renderBuilderCardToCanvas({
       ctx.fillStyle = color;
       ctx.fill();
 
-      ctx.font = "700 13px 'JetBrains Mono'";
+      ctx.font = "700 12px 'JetBrains Mono'";
       ctx.fillStyle = color;
-      ctx.fillText(String(value), barX + barW + 14, y + barH - 1);
+      ctx.fillText(String(value), barX + barW + 12, y + barH - 1);
     };
-    drawBar("FOCUS", dna.focus, waveY + 26, "#9AC95F");
-    drawBar("SHIP", dna.ship, waveY + 56, "#FEE101");
+    drawBar("FOCUS", dna.focus, dnaTop - rowGap, "#9AC95F");
+    drawBar("SHIP", dna.ship, dnaTop, "#FEE101");
   }
 
-  // bottom row: QR + Builder ID/serial (left) and Builder number + seal
-  // (right), docked just above the footer botanical band so nothing floats
-  // in guessed whitespace.
-  const footerH = H * 0.15;
-  const by = H - footerH - 46;
-  const qrSize = 92;
-  const sealSize = 104;
-  const dockGap = 20;
-  const leftTextX = padX + qrSize + dockGap;
-  const rightTextEdge = W - padX - sealSize - dockGap;
-
-  ctx.fillStyle = "rgba(251,246,233,0.4)";
-  ctx.font = "600 16px 'JetBrains Mono'";
-  ctx.fillText("BUILDER ID · 2026 · #FRAMEINGOA", leftTextX, by - 22);
-  if (serial) {
-    ctx.fillStyle = "rgba(251,246,233,0.3)";
-    ctx.font = "400 15px 'JetBrains Mono'";
-    ctx.fillText(serial, leftTextX, by + 2);
+  // -- tide-line divider, directly above the stats --
+  const waveY = dnaTop - 30;
+  ctx.strokeStyle = "rgba(154,201,95,0.5)";
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  const waveSpan = W - padX * 2;
+  const waveStep = 45;
+  ctx.moveTo(padX, waveY);
+  for (let x = 0; x <= waveSpan; x += waveStep * 2) {
+    ctx.quadraticCurveTo(padX + x + waveStep / 2, waveY - 6, padX + x + waveStep, waveY);
+    ctx.quadraticCurveTo(padX + x + waveStep * 1.5, waveY + 6, padX + x + waveStep * 2, waveY);
   }
+  ctx.stroke();
 
-  ctx.textAlign = "right";
-  ctx.fillStyle = "rgba(251,246,233,0.4)";
-  ctx.font = "600 18px 'JetBrains Mono'";
-  ctx.fillText("BUILDER", rightTextEdge, by - 46);
-  ctx.fillStyle = "#FEE101";
-  ctx.font = "400 50px 'Rozha One'";
-  ctx.fillText(builderNumber, rightTextEdge, by);
+  // -- compact tag row: stack, team, build mode, rarity --
+  const tagRowY = waveY - 24;
+  let tagX = padX;
+  const tagH = 32;
+  const maxRight = W - padX;
+  ctx.font = "700 15px 'Baloo 2'";
+  const drawTag = (label, { stroke, fill, text }) => {
+    if (!label) return;
+    const t = label.toUpperCase();
+    const w = ctx.measureText(t).width + 24;
+    if (tagX + w > maxRight && tagX > padX) return; // single row by design — extras simply omitted rather than overflow
+    roundedRectPath(ctx, tagX, tagRowY - tagH + 6, w, tagH, tagH / 2);
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = text;
+    ctx.fillText(t, tagX + 12, tagRowY - 5);
+    tagX += w + 10;
+  };
+  drawTag(stack, { stroke: "rgba(251,246,233,0.3)", fill: "rgba(3,26,14,0.35)", text: "rgba(251,246,233,0.8)" });
+  drawTag(team ? `Team ${team}` : null, { stroke: "#FEE101", fill: "rgba(254,225,1,0.18)", text: "#FEE101" });
+  drawTag(mode, { stroke: "rgba(251,246,233,0.3)", fill: "rgba(3,26,14,0.35)", text: "rgba(251,246,233,0.8)" });
+  drawTag(
+    rarity,
+    rarity === "Epic"
+      ? { stroke: "#FF0080", fill: "#FF0080", text: "#FBF6E9" }
+      : rarity === "Rare"
+        ? { stroke: "#FEE101", fill: "#FEE101", text: "#031A0E" }
+        : { stroke: "rgba(251,246,233,0.3)", fill: "rgba(3,26,14,0.3)", text: RARITY_COLOR[rarity] || RARITY_COLOR.Common }
+  );
 
-  ctx.textAlign = "left";
+  // -- builder title, directly above the tag row --
+  const titleY = tagRowY - tagH - 6;
+  const titleGrad = ctx.createLinearGradient(padX, 0, padX + 480, 0);
+  titleGrad.addColorStop(0, "#FEE101");
+  titleGrad.addColorStop(0.5, "#EDD723");
+  titleGrad.addColorStop(1, "#FF0080");
+  ctx.fillStyle = titleGrad;
+  ctx.font = "700 30px 'Baloo 2'";
+  ctx.fillText(title, padX, titleY);
 
-  // event QR, docked to the left of "BUILDER ID · 2026" — bottom-aligned
-  // with the text block below it. Placeholder destination (hhgoa.com) for
-  // now. White backing plate is load-bearing, not decorative — a QR needs
-  // real contrast to scan reliably.
-  try {
-    const qr = await loadImage(getEventQrDataUrl());
-    const qrX = padX;
-    const qrY = by + 12 - qrSize;
-    ctx.save();
-    ctx.shadowColor = "rgba(3,26,14,0.5)";
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 3;
-    ctx.fillStyle = "#FBF6E9";
-    roundedRectPath(ctx, qrX, qrY, qrSize, qrSize, 8);
-    ctx.fill();
-    ctx.restore();
-    const pad = 8;
-    ctx.drawImage(qr, qrX + pad, qrY + pad, qrSize - pad * 2, qrSize - pad * 2);
-  } catch {
-    // QR is decorative — export still succeeds without it
-  }
-
-  // the official गोवा seal, docked to the right of the builder number,
-  // bottom-aligned to match the QR on the opposite side
-  try {
-    const seal = await loadImage("/brand/goa-seal.svg");
-    const sealX = W - padX - sealSize / 2;
-    const sealY = by - sealSize / 2 - 4;
-    ctx.save();
-    ctx.translate(sealX, sealY);
-    ctx.rotate((-6 * Math.PI) / 180);
-    ctx.shadowColor = "rgba(3,26,14,0.8)";
-    ctx.shadowOffsetX = 4;
-    ctx.shadowOffsetY = 5;
-    ctx.drawImage(seal, -sealSize / 2, -sealSize / 2, sealSize, sealSize);
-    ctx.restore();
-  } catch {
-    // seal is decorative — export still succeeds without it
-  }
+  // -- name, the largest element on the card, directly above the title --
+  const nameY = titleY - 46;
+  ctx.fillStyle = "#FBF6E9";
+  ctx.font = "400 64px 'Rozha One'";
+  ctx.fillText(truncate(ctx, name, W - padX * 2), padX, nameY);
 
   // footer band — a real cropped slice of the official palm-frame asset
-  // (bougainvillea, marigold, monstera leaves), not an invented tropical
-  // cliché. This is the card's biggest "Goa energy" beat, and it's also
-  // exactly what used to be dead green space at the very bottom edge of
-  // the old, taller card.
+  // (bougainvillea, marigold, monstera leaves), tucked below the identity
+  // copy so it frames rather than competes with it
   try {
     const palm = await loadImage("/brand/palm-frame.webp");
     // trunk-free horizontal band, bottom ~14% of the source image —
