@@ -63,7 +63,8 @@ export default function App() {
     const blob = dataUrlToBlob(claimed.imageDataUrl);
     const filename = `hhgoa-2026-builder-id-${claimed.name.toLowerCase().replace(/\s+/g, "-")}.png`;
     // Reuse the /s/{id} link saved at generation time, when it made it in —
-    // otherwise this falls back to buildCaption's default EVENT_URL.
+    // otherwise buildCaption omits the link line entirely rather than
+    // substituting a generic URL that wouldn't represent this card.
     const caption = buildCaption({
       builderNumber: claimed.builderNumber,
       title: claimed.title,

@@ -47,6 +47,7 @@ export default async function handler(req, res) {
     }
 
     const id = randomUUID().replace(/-/g, "").slice(0, 12);
+    console.log("[BUILDER SHARE] Upload started, bytes:", buffer.length);
 
     const blob = await put(`cards/${id}.png`, buffer, {
       access: "public",
@@ -54,9 +55,10 @@ export default async function handler(req, res) {
       addRandomSuffix: false,
     });
 
+    console.log("[BUILDER SHARE] Blob upload response:", blob.url);
     res.status(200).json({ id, url: blob.url });
   } catch (err) {
-    console.error("upload failed", err);
+    console.error("[BUILDER SHARE] upload failed", err);
     res.status(500).json({ error: "Upload failed" });
   }
 }

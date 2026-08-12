@@ -6,7 +6,7 @@ import MagneticButton from "../shared/MagneticButton.jsx";
 import { exportCardAsPNG } from "../../utils/canvasCard.js";
 import { generateBuilderNumber, generateSerial, generateRarity, generateBuilderDNA } from "../../data/titles.js";
 import { saveBuilderRecord } from "../../utils/persistence.js";
-import { shareBuilderCard, buildCaption, uploadCardForShare, EVENT_URL } from "../../utils/shareCard.js";
+import { shareBuilderCard, buildCaption, uploadCardForShare } from "../../utils/shareCard.js";
 
 // Tiny inline success states — no modal, matches the button's own copy so
 // the confirmation reads as one intentional action rather than a system
@@ -17,10 +17,17 @@ function successLabel(hint) {
   return "Post Composed ✓";
 }
 
-function shareHintCopy(hint) {
+function shareHintCopy(hint, linkMissing) {
   if (hint === "shared") return "Shared — pick where it posts.";
-  if (hint === "copied") return "Card copied — paste it (⌘/Ctrl+V) into your tweet before posting.";
-  return "Card downloaded — attach it to your tweet before posting.";
+  const base =
+    hint === "copied"
+      ? "Card copied — paste it (⌘/Ctrl+V) into your tweet before posting."
+      : "Card downloaded — attach it to your tweet before posting.";
+  // The native share sheet attaches the image directly, so a missing
+  // preview link doesn't matter there. For the copy/download fallbacks,
+  // the composer text has no link in it — worth telling the person so
+  // they're not confused when the tweet looks caption-only.
+  return linkMissing ? `${base} (No preview link this time — the image itself still posts fine.)` : base;
 }
 
 const LOCK_STEPS = ["PHOTO", "BUILDER TITLE", "GOA ENERGY", "BUILDER NUMBER"];
@@ -33,6 +40,7 @@ export default function Reveal({ builder, onRestart }) {
   const [cardBlob, setCardBlob] = useState(null);
   const [rendering, setRendering] = useState(true);
   const [shareHint, setShareHint] = useState(null); // 'shared' | 'copied' | 'downloaded' | null
+  const [linkMissing, setLinkMissing] = useState(false);
   const [sharing, setSharing] = useState(false);
   const firedConfetti = useRef(false);
   // Resolves to a /s/{id} link with a real per-card og:image, or null if the
@@ -80,6 +88,7 @@ export default function Reveal({ builder, onRestart }) {
       // Fire the share-link upload in the background — never awaited here,
       // so it can't add latency to Download/Share becoming available. The
       // result is only consumed later, by handleShare.
+      console.log("[BUILDER SHARE] Generated image created: YES");
       shareUrlPromiseRef.current = uploadCardForShare({
         blob,
         meta: { name: builder.name, title: builder.title, rarity, builderNumber },
@@ -170,25 +179,36 @@ export default function Reveal({ builder, onRestart }) {
     if (!cardBlob) return;
     setSharing(true);
 
-    // Give the background upload a little extra time to land, but never
-    // block the share button waiting on the network — if it's not back in
-    // 3s (or fails, or isn't available on this host), fall back to the
-    // static event link rather than stalling "Share".
-    let link = EVENT_URL;
+    // The upload kicks off the instant the card blob is ready — the same
+    // moment this button becomes clickable. So when someone taps Share
+    // immediately, the upload has had ~0ms head start, not several
+    // seconds. A base64-encoded 1-3MB PNG + a cold serverless invocation +
+    // a Blob write routinely takes longer than that. The previous 3s cap
+    // was cutting the upload off before it had a real chance to finish,
+    // which read as "the link is missing" when the actual problem was
+    // "we didn't wait long enough." Give it a realistic budget instead —
+    // long enough to cover a cold start, short enough that Share never
+    // feels stuck if the network is genuinely down.
+    let link = null;
     try {
       const resolved = await Promise.race([
         shareUrlPromiseRef.current,
-        new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+        new Promise((resolve) => setTimeout(() => resolve(null), 12000)),
       ]);
       if (resolved) link = resolved;
     } catch {
-      // shareUrlPromiseRef stays EVENT_URL
+      // link stays null
+    }
+    if (!link) {
+      console.warn("[BUILDER SHARE] No share URL available when composer opened — upload didn't resolve in time or failed. Check the Network tab for /api/upload and Vercel's function logs.");
     }
 
     const caption = buildCaption({ builderNumber, title: builder.title, rarity, link });
+    console.log("[BUILDER SHARE] X intent caption:", caption.length > 0 ? `${caption.slice(0, 80)}…` : "(empty)");
     const result = await shareBuilderCard({ blob: cardBlob, filename, caption });
     setSharing(false);
     if (result === "failed") return;
+    setLinkMissing(!link && result !== "shared");
     setShareHint(result);
     setTimeout(() => setShareHint(null), 7000);
   };
@@ -290,7 +310,7 @@ export default function Reveal({ builder, onRestart }) {
                   exit={{ opacity: 0 }}
                   className="mt-4 max-w-xs text-center text-xs font-mono text-goa-yellow/90"
                 >
-                  {shareHintCopy(shareHint)}
+                  {shareHintCopy(shareHint, linkMissing)}
                 </motion.p>
               )}
             </AnimatePresence>

@@ -17,7 +17,12 @@
 // The button should never end in a dead state: one of these three always
 // succeeds enough to get the person to a place where they can post.
 
-export const EVENT_URL = "https://hhgoa.com";
+// The official event site — only ever used as plain-text branding, never
+// as a stand-in for a card's share link. If a card fails to upload, the
+// caption simply omits the link rather than pointing at this URL, which
+// has no /s/:id route and would silently misrepresent a broken share as a
+// working one.
+export const OFFICIAL_SITE_URL = "https://hhgoa.com";
 
 function blobToDataURL(blob) {
   return new Promise((resolve, reject) => {
@@ -30,17 +35,21 @@ function blobToDataURL(blob) {
 
 // Uploads the rendered card to /api/upload (Vercel Blob under the hood) and
 // returns a /s/{id} link — a real URL, pointed at by /api/share/[id].js,
-// that carries an <meta og:image> for *this specific card*. That link (not
-// the static EVENT_URL) is what should go in the tweet text whenever the
-// image itself isn't directly attached, so the X link preview shows the
-// actual generated graphic instead of a generic/blank thumbnail.
+// that carries an <meta og:image> for *this specific card*.
 //
-// This only works when deployed on Vercel with a Blob store connected —
-// anywhere else (local `vite dev`, a different host, or if the request
-// simply fails) it resolves to null and callers fall back to EVENT_URL. The
-// share flow never blocks or errors because of this; it only loses the
-// per-card preview.
+// IMPORTANT: the link is built from window.location.origin, i.e. whatever
+// domain the app is actually running on — never a hardcoded domain. The
+// /s/:id rewrite (see vercel.json) only exists on this deployment, so a
+// hardcoded domain (e.g. the marketing site) would produce a link with no
+// matching route, even on a fully successful upload.
+//
+// This only works when deployed on Vercel with a Blob store connected and
+// BLOB_READ_WRITE_TOKEN present — anywhere else (local `vite dev`, a
+// different host, or if the request simply fails) it resolves to null and
+// the caller (Reveal.jsx) omits the link entirely rather than substituting
+// a URL that doesn't represent this card.
 export async function uploadCardForShare({ blob, meta = {} }) {
+  console.log("[BUILDER SHARE] Upload started, blob size:", blob?.size, "bytes");
   try {
     const dataUrl = await blobToDataURL(blob);
     const res = await fetch("/api/upload", {
@@ -48,8 +57,13 @@ export async function uploadCardForShare({ blob, meta = {} }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ imageBase64: dataUrl }),
     });
-    if (!res.ok) return null;
-    const { id } = await res.json();
+    console.log("[BUILDER SHARE] Blob upload response status:", res.status);
+    if (!res.ok) {
+      console.error("[BUILDER SHARE] /api/upload failed:", res.status, await res.text().catch(() => ""));
+      return null;
+    }
+    const { id, url } = await res.json();
+    console.log("[BUILDER SHARE] Generated image URL:", url);
     if (!id) return null;
 
     const params = new URLSearchParams();
@@ -59,8 +73,12 @@ export async function uploadCardForShare({ blob, meta = {} }) {
     if (meta.builderNumber) params.set("builder", meta.builderNumber);
     const qs = params.toString();
 
-    return `${EVENT_URL}/s/${id}${qs ? `?${qs}` : ""}`;
-  } catch {
+    const origin = typeof window !== "undefined" ? window.location.origin : OFFICIAL_SITE_URL;
+    const shareUrl = `${origin}/s/${id}${qs ? `?${qs}` : ""}`;
+    console.log("[BUILDER SHARE] Share page URL:", shareUrl);
+    return shareUrl;
+  } catch (err) {
+    console.error("[BUILDER SHARE] uploadCardForShare threw:", err);
     return null;
   }
 }
@@ -89,9 +107,14 @@ function openTweetComposer(text, popup) {
 // Conversation-oriented caption — asks a direct question so replies and
 // quote-tweets ("what did YOU get?") are the natural response, rather than
 // generic marketing copy.
-export function buildCaption({ builderNumber, title, rarity, link = EVENT_URL }) {
+//
+// `link` is optional and omitted entirely when absent (e.g. the card's
+// upload failed) — we never substitute a generic URL in its place, since
+// that would misrepresent what's actually being shared.
+export function buildCaption({ builderNumber, title, rarity, link }) {
   const rarityLine = rarity === "Legendary" || rarity === "Epic" ? `Pulled ${rarity} tier ✨\n\n` : "";
-  return `Just claimed my HH Goa Builder ID.\n\nBuilder ${builderNumber} · ${title}\n\n${rarityLine}What's your builder class?\n\n#FrameInGoa\n${link}`;
+  const linkLine = link ? `\n${link}` : "";
+  return `Just claimed my HH Goa Builder ID.\n\nBuilder ${builderNumber} · ${title}\n\n${rarityLine}What's your builder class?\n\n#FrameInGoa${linkLine}`;
 }
 
 /**
